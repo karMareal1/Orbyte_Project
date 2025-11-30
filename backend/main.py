@@ -1,8 +1,16 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Dict, Any
-import ai_service
+from typing import Dict, Any, List
+from datetime import datetime, timedelta
+
+# Import models
+from models.schemas import (
+    Control, Resource, SimulationRequest, SimulationResult, 
+    ControlStatus, ControlSeverity
+)
+
+# Import services
+from services import metrics_engine, ai_reasoning, mock_data
 
 app = FastAPI(title="Orbyte Backend")
 
@@ -20,46 +28,135 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class ImplementationRequest(BaseModel):
-    control_id: str
-    control_description: str
-    evidence_summary: str
-
-class SustainabilityRequest(BaseModel):
-    metrics: Dict[str, Any]
-
-class ScenarioRequest(BaseModel):
-    params: Dict[str, Any]
-    numeric_results: Dict[str, Any]
+# --- Endpoints ---
 
 @app.get("/")
 def read_root():
     return {"message": "Orbyte Backend is running"}
 
-@app.post("/api/ai/implementation-statement")
-def create_implementation_statement(request: ImplementationRequest):
-    try:
-        text = ai_service.generate_implementation_statement(
-            request.control_id,
-            request.control_description,
-            request.evidence_summary
-        )
-        return {"text": text}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/api/overview")
+async def get_overview():
+    controls = mock_data.get_mock_controls()
+    resources = mock_data.get_mock_resources()
+    
+    # Compute metrics
+    compliance_score = metrics_engine.compute_overall_compliance_score(controls)
+    sust_metrics = metrics_engine.compute_sustainability_metrics(resources)
+    open_risks = metrics_engine.get_open_risks(controls)
+    
+    # Mock trends
+    today = datetime.now()
+    compliance_trend = [
+        {"timestamp": (today - timedelta(days=i*5)).isoformat(), "score": max(60, compliance_score - i*2)}
+        for i in range(6)
+    ][::-1]
+    
+    emissions_trend = [
+        {"timestamp": (today - timedelta(days=i*5)).isoformat(), "emissions_kg": max(100, sust_metrics["total_monthly_emissions_kg"] + i*50)}
+        for i in range(6)
+    ][::-1]
+    
+    top_issues = []
+    for c in controls:
+        if c.status == ControlStatus.FAIL:
+            top_issues.append({
+                "type": "compliance",
+                "description": f"Control {c.id} ({c.name}) is failing",
+                "severity": c.severity.value,
+                "status": "Open",
+                "last_updated": today.isoformat()
+            })
+            
+    return {
+        "compliance_score": round(compliance_score, 1),
+        "sustainability_score": round(sust_metrics["sustainability_score"], 1),
+        "open_risks": sum(open_risks.values()),
+        "compliance_trend": compliance_trend,
+        "emissions_trend": emissions_trend,
+        "top_issues": top_issues[:5]
+    }
 
-@app.post("/api/ai/sustainability-insight")
-def create_sustainability_insight(request: SustainabilityRequest):
-    try:
-        text = ai_service.generate_sustainability_insight(request.metrics)
-        return {"text": text}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/api/compliance/controls", response_model=List[Control])
+def get_controls():
+    return mock_data.get_mock_controls()
 
-@app.post("/api/ai/scenario-narrative")
-def create_scenario_narrative(request: ScenarioRequest):
-    try:
-        text = ai_service.generate_scenario_narrative(request.params, request.numeric_results)
-        return {"text": text}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/api/compliance/controls/{control_id}/analysis")
+async def analyze_control(control_id: str):
+    controls = mock_data.get_mock_controls()
+    control = next((c for c in controls if c.id == control_id), None)
+    if not control:
+        raise HTTPException(status_code=404, detail="Control not found")
+    
+    # Mock evidence
+    evidence = [
+        {"type": "iam_policy", "detail": "enforce_ssl=true on 80% of resources"},
+        {"type": "log_sample", "detail": "No failed login attempts in last 24h"}
+    ]
+    
+    result = await ai_reasoning.generate_implementation_statement(control, evidence)
+    return result
+
+@app.get("/api/sustainability/metrics")
+def get_sustainability_metrics():
+    resources = mock_data.get_mock_resources()
+    metrics = metrics_engine.compute_sustainability_metrics(resources)
+    
+    # Generate AI insight
+    worst_region = None
+    if metrics["emissions_by_region"]:
+        worst_region = max(metrics["emissions_by_region"], key=lambda x: x["emissions_kg"])["region"]
+        
+    insight = ai_reasoning.generate_sustainability_insight(
+        metrics["total_monthly_emissions_kg"],
+        metrics["potential_monthly_emissions_savings_kg"],
+        len(metrics["idle_resources"]),
+        worst_region
+    )
+    
+    metrics["ai_insight"] = insight
+    return metrics
+
+@app.post("/api/simulations/run", response_model=SimulationResult)
+def run_simulation(request: SimulationRequest):
+    resources = mock_data.get_mock_resources()
+    
+    # Basic simulation logic
+    emissions_reduction = 0.0
+    cost_savings = 0.0
+    
+    if request.simulation_type == "idle_shutdown":
+        metrics = metrics_engine.compute_sustainability_metrics(resources)
+        idle_resources = metrics["idle_resources"]
+        
+        # Apply workload percent
+        count_to_shutdown = int(len(idle_resources) * (request.workload_percent / 100.0))
+        affected = idle_resources[:count_to_shutdown]
+        
+        for r in affected:
+            # Assume 10 hours shutdown per day
+            daily_emissions = metrics_engine.estimate_daily_emissions_kg(r)
+            emissions_reduction += daily_emissions * (10/24) * 30
+            cost_savings += r.daily_cost_usd * (10/24) * 30
+            
+    elif request.simulation_type == "region_migration":
+        # Simplified migration logic
+        # Assume 20% reduction if moving to cleaner region
+        metrics = metrics_engine.compute_sustainability_metrics(resources)
+        total_emissions = metrics["total_monthly_emissions_kg"]
+        emissions_reduction = total_emissions * 0.2 * (request.workload_percent / 100.0)
+        cost_savings = 50.0 # Mock
+        
+    # Get AI narrative
+    narrative = ai_reasoning.generate_scenario_narrative(
+        request.simulation_type,
+        request.dict(),
+        emissions_reduction,
+        cost_savings
+    )
+    
+    return SimulationResult(
+        estimated_emissions_reduction_kg=emissions_reduction,
+        estimated_cost_savings_usd=cost_savings,
+        risk_summary=narrative["risk_summary"],
+        detail_summary=narrative["detail_summary"]
+    )

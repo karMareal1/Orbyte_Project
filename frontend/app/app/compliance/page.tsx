@@ -1,75 +1,143 @@
-"use client"
+"use client";
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { ShieldCheck, AlertTriangle, CheckCircle, ArrowRight, Lock } from "lucide-react"
+import { useEffect, useState } from "react";
+import { fetchComplianceControls, analyzeControl, Control, AnalysisResult } from "@/lib/api";
+import { ShieldCheck, AlertTriangle, CheckCircle, ArrowRight, Loader2, BrainCircuit } from "lucide-react";
 
 export default function CompliancePage() {
+    const [controls, setControls] = useState<Control[]>([]);
+    const [selectedControl, setSelectedControl] = useState<Control | null>(null);
+    const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+    const [analyzing, setAnalyzing] = useState(false);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        fetchComplianceControls()
+            .then(setControls)
+            .catch(console.error)
+            .finally(() => setLoading(false));
+    }, []);
+
+    const handleAnalyze = async (control: Control) => {
+        setSelectedControl(control);
+        setAnalysis(null);
+        setAnalyzing(true);
+        try {
+            const result = await analyzeControl(control.id);
+            setAnalysis(result);
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setAnalyzing(false);
+        }
+    };
+
     return (
-        <div className="space-y-8">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight text-white neon-text">Compliance Center</h1>
-                    <p className="text-muted-foreground">Monitor and enforce security controls across your infrastructure.</p>
-                </div>
-                <Button className="bg-primary text-black hover:bg-cyan-400 neon-glow">
-                    <ShieldCheck className="mr-2 h-4 w-4" /> Run Full Audit
-                </Button>
-            </div>
+        <div className="flex h-[calc(100vh-4rem)]">
+            {/* Main List */}
+            <div className="flex-1 p-8 overflow-y-auto">
+                <h1 className="text-2xl font-bold text-white mb-6">Compliance Controls</h1>
 
-            {/* Framework Status */}
-            <div className="grid gap-6 md:grid-cols-3">
-                {[
-                    { name: "NIST 800-53", status: "Passing", score: "98%", color: "text-green-400", border: "border-green-400/50" },
-                    { name: "SOC 2 Type II", status: "At Risk", score: "85%", color: "text-orange-400", border: "border-orange-400/50" },
-                    { name: "ISO 27001", status: "Passing", score: "100%", color: "text-green-400", border: "border-green-400/50" },
-                ].map((framework, i) => (
-                    <Card key={i} className={`glass-card ${framework.border} shadow-[0_0_20px_rgba(0,0,0,0.2)]`}>
-                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                            <CardTitle className="text-lg font-bold text-white">{framework.name}</CardTitle>
-                            <Lock className={`h-5 w-5 ${framework.color}`} />
-                        </CardHeader>
-                        <CardContent>
-                            <div className={`text-3xl font-bold ${framework.color} mb-1`}>{framework.score}</div>
-                            <p className="text-sm text-muted-foreground">Status: <span className={framework.color}>{framework.status}</span></p>
-                        </CardContent>
-                    </Card>
-                ))}
-            </div>
-
-            {/* Controls List */}
-            <Card className="glass-card border-white/10">
-                <CardHeader>
-                    <CardTitle className="text-white">Active Controls</CardTitle>
-                    <CardDescription>Real-time monitoring of 142 security controls.</CardDescription>
-                </CardHeader>
-                <CardContent>
+                {loading ? (
                     <div className="space-y-4">
-                        {[
-                            { id: "AC-2", name: "Account Management", status: "Compliant", icon: CheckCircle, color: "text-green-400" },
-                            { id: "AU-6", name: "Audit Review, Analysis, and Reporting", status: "Non-Compliant", icon: AlertTriangle, color: "text-red-400" },
-                            { id: "SC-7", name: "Boundary Protection", status: "Compliant", icon: CheckCircle, color: "text-green-400" },
-                            { id: "SI-4", name: "Information System Monitoring", status: "Warning", icon: AlertTriangle, color: "text-orange-400" },
-                            { id: "IA-2", name: "Identification and Authentication", status: "Compliant", icon: CheckCircle, color: "text-green-400" },
-                        ].map((control, i) => (
-                            <div key={i} className="flex items-center justify-between p-4 rounded-lg bg-white/5 border border-white/5 hover:border-primary/30 transition-colors group">
+                        {[1, 2, 3].map(i => <div key={i} className="h-20 bg-white/5 rounded-lg animate-pulse" />)}
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        {controls.map((control) => (
+                            <div
+                                key={control.id}
+                                onClick={() => handleAnalyze(control)}
+                                className={`
+                  flex items-center justify-between p-4 rounded-lg border cursor-pointer transition-all
+                  ${selectedControl?.id === control.id ? 'bg-cyan-500/10 border-cyan-500/50' : 'bg-white/5 border-white/10 hover:border-white/20'}
+                `}
+                            >
                                 <div className="flex items-center gap-4">
-                                    <div className={`p-2 rounded-full bg-black/50 ${control.color}`}>
-                                        <control.icon className="h-5 w-5" />
+                                    <div className={`
+                    p-2 rounded-full 
+                    ${control.status === 'pass' ? 'text-green-400 bg-green-400/10' :
+                                            control.status === 'fail' ? 'text-red-400 bg-red-400/10' : 'text-orange-400 bg-orange-400/10'}
+                  `}>
+                                        {control.status === 'pass' ? <CheckCircle size={20} /> :
+                                            control.status === 'fail' ? <AlertTriangle size={20} /> : <ShieldCheck size={20} />}
                                     </div>
                                     <div>
-                                        <p className="text-sm font-medium text-white group-hover:text-primary transition-colors">{control.id}: {control.name}</p>
-                                        <p className={`text-xs ${control.color}`}>{control.status}</p>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-mono text-cyan-400">{control.id}</span>
+                                            <span className="text-white font-medium">{control.name}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2 text-xs text-gray-400 mt-1">
+                                            <span className="uppercase">{control.framework}</span>
+                                            <span>•</span>
+                                            <span className="capitalize">{control.severity} Severity</span>
+                                        </div>
                                     </div>
                                 </div>
-                                <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-white">
-                                    Details <ArrowRight className="ml-2 h-4 w-4" />
-                                </Button>
+                                <ArrowRight size={16} className="text-gray-500" />
                             </div>
                         ))}
                     </div>
-                </CardContent>
-            </Card>
+                )}
+            </div>
+
+            {/* Side Panel */}
+            {selectedControl && (
+                <div className="w-96 border-l border-white/10 bg-black/20 backdrop-blur-xl p-6 overflow-y-auto">
+                    <div className="mb-6">
+                        <h2 className="text-xl font-bold text-white mb-2">{selectedControl.id} Analysis</h2>
+                        <p className="text-sm text-gray-400">{selectedControl.description}</p>
+                    </div>
+
+                    {analyzing ? (
+                        <div className="space-y-6 py-12">
+                            <div className="flex flex-col items-center gap-4 text-center">
+                                <div className="relative">
+                                    <div className="absolute inset-0 bg-cyan-500 blur-xl opacity-20 animate-pulse" />
+                                    <BrainCircuit size={48} className="text-cyan-400 animate-pulse relative z-10" />
+                                </div>
+                                <div className="space-y-2">
+                                    <p className="text-cyan-400 font-medium">Orbyte AI is thinking...</p>
+                                    <div className="text-xs text-gray-500 space-y-1">
+                                        <p className="animate-fade-in">Retrieving evidence...</p>
+                                        <p className="animate-fade-in delay-75">Analyzing with Vertex AI...</p>
+                                        <p className="animate-fade-in delay-150">Drafting statement...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ) : analysis ? (
+                        <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
+                            <div className="p-4 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+                                <h3 className="text-sm font-medium text-cyan-400 mb-2 flex items-center gap-2">
+                                    <BrainCircuit size={16} />
+                                    Implementation Statement
+                                </h3>
+                                <p className="text-sm text-gray-300 leading-relaxed">
+                                    {analysis.implementation_statement}
+                                </p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="p-3 rounded-lg bg-white/5">
+                                    <p className="text-xs text-gray-500 mb-1">Status</p>
+                                    <p className={`font-medium capitalize ${analysis.status === 'pass' ? 'text-green-400' :
+                                            analysis.status === 'fail' ? 'text-red-400' : 'text-orange-400'
+                                        }`}>
+                                        {analysis.status}
+                                    </p>
+                                </div>
+                                <div className="p-3 rounded-lg bg-white/5">
+                                    <p className="text-xs text-gray-500 mb-1">Confidence</p>
+                                    <p className="font-medium text-white">
+                                        {(analysis.analysis_confidence * 100).toFixed(0)}%
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    ) : null}
+                </div>
+            )}
         </div>
-    )
+    );
 }
