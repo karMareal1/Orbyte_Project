@@ -8,30 +8,34 @@ from models.schemas import Control, ControlStatus
 
 load_dotenv()
 
-PROJECT_ID = os.getenv("GCP_PROJECT_ID")
-LOCATION = os.getenv("GCP_LOCATION")
-MODEL_NAME = os.getenv("VERTEX_MODEL_NAME", "gemini-pro")
+# Configuration
+PROJECT_ID = os.getenv("GCP_PROJECT_ID", "orbyteprototype")
+LOCATION = os.getenv("GCP_LOCATION", "us-central1")
+MODEL_NAME = os.getenv("VERTEX_MODEL_NAME", "gemini-2.5-flash")
+USE_MOCK_AI = os.getenv("ORBYTE_USE_MOCK_AI", "false").lower() == "true"
 
 # Initialize Vertex AI
 model = None
-try:
-    if PROJECT_ID and LOCATION:
+if not USE_MOCK_AI:
+    try:
         vertexai.init(project=PROJECT_ID, location=LOCATION)
         model = GenerativeModel(MODEL_NAME)
         print(f"Vertex AI initialized with project {PROJECT_ID} and model {MODEL_NAME}")
-    else:
-        print("Vertex AI credentials not found, running in simulation mode.")
-except Exception as e:
-    print(f"Error initializing Vertex AI: {e}")
+    except Exception as e:
+        print(f"Error initializing Vertex AI: {e}")
+        print("Falling back to Mock AI mode.")
+        model = None
 
 async def generate_implementation_statement(control: Control, evidence: list[dict[str, str]]) -> dict:
     """
     Generates a compliance implementation statement using Vertex AI (or simulation).
     """
+    if USE_MOCK_AI or not model:
+        return await _generate_mock_implementation_statement(control, evidence)
+
     evidence_text = "\n".join([f"- {e.get('type', 'evidence')}: {e.get('detail', '')}" for e in evidence])
     
-    if model:
-        prompt = f"""
+    prompt = f"""
 You are Orbyte, an AI cloud compliance copilot.
 You write short, auditor-ready implementation statements mapping Google Cloud configurations to compliance controls.
 Write in clear, factual, professional English, 2–4 sentences.
@@ -54,31 +58,35 @@ Task:
 2. Clearly indicate any gaps or risks if evidence is incomplete.
 3. Use "we" to refer to the organization.
 """
-        try:
-            # Run in a thread to avoid blocking event loop if synchronous
-            response = await asyncio.to_thread(model.generate_content, prompt)
-            statement = response.text
-            confidence = 0.95 # Mock confidence for now
-        except Exception as e:
-            print(f"Vertex AI call failed: {e}")
-            statement = "Error generating statement from AI."
-            confidence = 0.0
-    else:
-        # Simulation mode
-        await asyncio.sleep(1.2)
-        if control.status == ControlStatus.PASS:
-            statement = (
-                f"For control {control.id} ({control.name}), analysis of configuration and "
-                f"audit logs indicates that required safeguards are in place. "
-                f"Evidence confirms compliant settings across {len(evidence)} monitored resources."
-            )
-        else:
-            statement = (
-                f"Control {control.id} ({control.name}) is currently {control.status}. "
-                f"Evidence suggests potential misconfigurations in {len(evidence)} resources that require remediation."
-            )
-        confidence = 0.85
+    try:
+        # Run in a thread to avoid blocking event loop if synchronous
+        response = await asyncio.to_thread(model.generate_content, prompt)
+        statement = response.text
+        confidence = 0.95 
+        return {
+            "control_id": control.id,
+            "status": control.status,
+            "implementation_statement": statement,
+            "analysis_confidence": confidence
+        }
+    except Exception as e:
+        print(f"Vertex AI call failed: {e}")
+        return await _generate_mock_implementation_statement(control, evidence)
 
+async def _generate_mock_implementation_statement(control: Control, evidence: list[dict[str, str]]) -> dict:
+    await asyncio.sleep(1.2)
+    if control.status == ControlStatus.PASS:
+        statement = (
+            f"For control {control.id} ({control.name}), analysis of configuration and "
+            f"audit logs indicates that required safeguards are in place. "
+            f"Evidence confirms compliant settings across {len(evidence)} monitored resources."
+        )
+    else:
+        statement = (
+            f"Control {control.id} ({control.name}) is currently {control.status}. "
+            f"Evidence suggests potential misconfigurations in {len(evidence)} resources that require remediation."
+        )
+    confidence = 0.85
     return {
         "control_id": control.id,
         "status": control.status,
@@ -90,8 +98,10 @@ def generate_sustainability_insight(total_emissions_kg: float, potential_savings
     """
     Generates a sustainability insight.
     """
-    if model:
-        prompt = f"""
+    if USE_MOCK_AI or not model:
+        return _generate_mock_sustainability_insight(total_emissions_kg, potential_savings_kg, idle_count, worst_region)
+
+    prompt = f"""
 You are Orbyte, an AI sustainability analyst for cloud environments.
 You generate concise, actionable insights about emissions, idle resources, and potential savings.
 Your tone is factual and data-driven.
@@ -106,14 +116,14 @@ Task:
 Write 1–2 sentences summarizing the most impactful action this team can take in the next month to reduce emissions and cost.
 Be specific (e.g., "Schedule off-hours shutdown for 12 idle dev VMs in us-central1").
 """
-        try:
-            response = model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            print(f"Vertex AI call failed: {e}")
-            return "Unable to generate insight at this time."
-    
-    # Simulation logic
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        print(f"Vertex AI call failed: {e}")
+        return _generate_mock_sustainability_insight(total_emissions_kg, potential_savings_kg, idle_count, worst_region)
+
+def _generate_mock_sustainability_insight(total_emissions_kg: float, potential_savings_kg: float, idle_count: int, worst_region: str | None) -> str:
     if idle_count >= 5 and potential_savings_kg > 1000:
         return (
             f"If you schedule shutdowns for {idle_count} idle non-production resources, "
@@ -131,8 +141,10 @@ def generate_scenario_narrative(simulation_type: str, params: dict, emissions_re
     """
     Generates a narrative for a simulation result.
     """
-    if model:
-        prompt = f"""
+    if USE_MOCK_AI or not model:
+        return _generate_mock_scenario_narrative(simulation_type, emissions_reduction_kg, cost_savings_usd)
+
+    prompt = f"""
 You are Orbyte, an AI assistant that explains simulated changes to cloud infrastructure.
 You take numeric simulation results and translate them into clear, executive-ready summaries.
 
@@ -148,35 +160,30 @@ Task:
 2. Write 1 short sentence on potential risks or caveats.
 Return the response as a JSON object with keys "detail_summary" and "risk_summary".
 """
+    try:
+        response = model.generate_content(prompt)
+        text = response.text
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0]
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0]
+        
         try:
-            response = model.generate_content(prompt)
-            # Try to parse JSON if the model returns it, otherwise wrap text
-            text = response.text
-            # Simple heuristic to extract JSON if wrapped in markdown code blocks
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0]
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0]
-            
-            try:
-                data = json.loads(text)
-                return {
-                    "detail_summary": data.get("detail_summary", text),
-                    "risk_summary": data.get("risk_summary", "Review operational impact before applying.")
-                }
-            except:
-                return {
-                    "detail_summary": text,
-                    "risk_summary": "Review operational impact before applying."
-                }
-        except Exception as e:
-            print(f"Vertex AI call failed: {e}")
+            data = json.loads(text)
             return {
-                "detail_summary": "Error generating summary.",
-                "risk_summary": "Unknown risk."
+                "detail_summary": data.get("detail_summary", text),
+                "risk_summary": data.get("risk_summary", "Review operational impact before applying.")
             }
+        except:
+            return {
+                "detail_summary": text,
+                "risk_summary": "Review operational impact before applying."
+            }
+    except Exception as e:
+        print(f"Vertex AI call failed: {e}")
+        return _generate_mock_scenario_narrative(simulation_type, emissions_reduction_kg, cost_savings_usd)
 
-    # Simulation logic
+def _generate_mock_scenario_narrative(simulation_type: str, emissions_reduction_kg: float, cost_savings_usd: float) -> dict:
     return {
         "detail_summary": (
             f"Simulating {simulation_type} yields ~{emissions_reduction_kg:.0f} kg CO2e "

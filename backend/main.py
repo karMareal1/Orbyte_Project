@@ -10,7 +10,7 @@ from models.schemas import (
 )
 
 # Import services
-from services import metrics_engine, ai_reasoning, mock_data
+from services import metrics_engine, ai_reasoning, mock_data, bigquery_service
 
 app = FastAPI(title="Orbyte Backend")
 
@@ -36,15 +36,24 @@ def read_root():
 
 @app.get("/api/overview")
 async def get_overview():
-    controls = mock_data.get_mock_controls()
-    resources = mock_data.get_mock_resources()
+    # Try BigQuery first, fall back to mock if empty/failed
+    try:
+        controls = bigquery_service.get_controls_from_bq()
+        resources = bigquery_service.get_resources_from_bq()
+        if not controls or not resources:
+            raise Exception("Empty BigQuery result")
+    except Exception as e:
+        print(f"[Orbyte] BigQuery failed or empty, using mock data: {e}")
+        controls = mock_data.get_mock_controls()
+        resources = mock_data.get_mock_resources()
     
     # Compute metrics
+    framework_scores = metrics_engine.compute_framework_compliance(controls)
     compliance_score = metrics_engine.compute_overall_compliance_score(controls)
     sust_metrics = metrics_engine.compute_sustainability_metrics(resources)
     open_risks = metrics_engine.get_open_risks(controls)
     
-    # Mock trends
+    # Mock trends (could be fetched from BQ in future)
     today = datetime.now()
     compliance_trend = [
         {"timestamp": (today - timedelta(days=i*5)).isoformat(), "score": max(60, compliance_score - i*2)}
@@ -71,23 +80,38 @@ async def get_overview():
         "compliance_score": round(compliance_score, 1),
         "sustainability_score": round(sust_metrics["sustainability_score"], 1),
         "open_risks": sum(open_risks.values()),
+        "framework_scores": framework_scores,
         "compliance_trend": compliance_trend,
         "emissions_trend": emissions_trend,
         "top_issues": top_issues[:5]
     }
 
 @app.get("/api/compliance/controls", response_model=List[Control])
-def get_controls():
-    return mock_data.get_mock_controls()
+async def get_controls():
+    try:
+        controls = bigquery_service.get_controls_from_bq()
+        if not controls:
+            raise Exception("Empty BigQuery result")
+    except Exception as e:
+        print(f"[Orbyte] BigQuery controls fallback: {e}")
+        controls = mock_data.get_mock_controls()
+    return controls
 
 @app.post("/api/compliance/controls/{control_id}/analysis")
 async def analyze_control(control_id: str):
-    controls = mock_data.get_mock_controls()
+    # Fetch control details
+    try:
+        controls = bigquery_service.get_controls_from_bq()
+        if not controls:
+            raise Exception("Empty BigQuery result")
+    except Exception:
+        controls = mock_data.get_mock_controls()
+        
     control = next((c for c in controls if c.id == control_id), None)
     if not control:
         raise HTTPException(status_code=404, detail="Control not found")
     
-    # Mock evidence
+    # Mock evidence (in real app, fetch from BQ evidence table)
     evidence = [
         {"type": "iam_policy", "detail": "enforce_ssl=true on 80% of resources"},
         {"type": "log_sample", "detail": "No failed login attempts in last 24h"}
@@ -97,8 +121,15 @@ async def analyze_control(control_id: str):
     return result
 
 @app.get("/api/sustainability/metrics")
-def get_sustainability_metrics():
-    resources = mock_data.get_mock_resources()
+async def get_sustainability_metrics():
+    try:
+        resources = bigquery_service.get_resources_from_bq()
+        if not resources:
+            raise Exception("Empty BigQuery result")
+    except Exception as e:
+        print(f"[Orbyte] BigQuery resources fallback: {e}")
+        resources = mock_data.get_mock_resources()
+    
     metrics = metrics_engine.compute_sustainability_metrics(resources)
     
     # Generate AI insight
@@ -118,7 +149,13 @@ def get_sustainability_metrics():
 
 @app.post("/api/simulations/run", response_model=SimulationResult)
 def run_simulation(request: SimulationRequest):
-    resources = mock_data.get_mock_resources()
+    # Use BQ or Mock resources
+    try:
+        resources = bigquery_service.get_resources_from_bq()
+        if not resources:
+            raise Exception("Empty BigQuery result")
+    except Exception:
+        resources = mock_data.get_mock_resources()
     
     # Basic simulation logic
     emissions_reduction = 0.0
