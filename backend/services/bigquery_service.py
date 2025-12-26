@@ -3,6 +3,10 @@ from models.schemas import Control, Resource, ControlSeverity, ControlStatus
 from typing import List
 import os
 
+# Ensure credentials helper runs early
+from services.gcp_auth_helper import ensure_credentials
+ensure_credentials()
+
 # Configuration
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "orbyteprototype")
 DATASET_ID = os.getenv("BQ_DATASET_ID", "orbyte")
@@ -10,6 +14,7 @@ DATASET_ID = os.getenv("BQ_DATASET_ID", "orbyte")
 # Initialize Client
 try:
     client = bigquery.Client(project=PROJECT_ID)
+    print(f"BigQuery client initialized for project: {PROJECT_ID}")
 except Exception as e:
     print(f"Error initializing BigQuery client: {e}")
     client = None

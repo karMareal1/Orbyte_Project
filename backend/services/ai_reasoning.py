@@ -8,6 +8,10 @@ from models.schemas import Control, ControlStatus
 
 load_dotenv()
 
+# Ensure credentials helper runs early so vertexai.init can use ADC or a written key
+from services.gcp_auth_helper import ensure_credentials
+ensure_credentials()
+
 # Configuration
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "orbyteprototype")
 LOCATION = os.getenv("GCP_LOCATION", "us-central1")

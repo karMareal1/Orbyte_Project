@@ -11,6 +11,10 @@ from models.schemas import (
 
 # Import services
 from services import metrics_engine, ai_reasoning, mock_data, bigquery_service
+from services.gcp_auth_helper import ensure_credentials
+
+# Run early credential detection/placement
+ensure_credentials()
 
 app = FastAPI(title="Orbyte Backend")
 
